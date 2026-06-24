@@ -115,15 +115,22 @@ function setupTemplateListeners() {
  * Parse input notes into structured data
  */
 function parseNotes(notesText) {
-    const lines = notesText.trim().split('\n').filter(line => line.trim());
-    
-    if (lines.length === 0) {
-        return { title: '', description: '' };
+    const trimmedText = notesText.trim();
+    if (!trimmedText) {
+        return { title: '', description: '', lines: [] };
     }
 
-    const title = lines[0];
-    const description = lines.slice(1).join('\n');
+    const lines = trimmedText.split('\n').map(line => line.trim()).filter(line => line);
+    let title = 'Meeting Notes';
 
+    const explicitTitleLine = lines.find(line => /^\s*(Title|Subject)\s*[:\-]/i.test(line));
+    if (explicitTitleLine) {
+        title = explicitTitleLine.replace(/^\s*(Title|Subject)\s*[:\-]\s*/i, '').trim();
+    } else if (lines.length === 1) {
+        title = lines[0];
+    }
+
+    const description = trimmedText;
     return { title, description, lines };
 }
 
@@ -139,6 +146,24 @@ function formatAsUserStory(title, description) {
  */
 function formatAsAcceptanceCriteria(lines) {
     return lines.map(line => `- ${line.trim()}`).join('\n');
+}
+
+function extractSuccessMetricLines(lines) {
+    return lines.filter(line => /success|metric|measure|goal|outcome|KPI|criterion|criteria/i.test(line));
+}
+
+function inferSuccessCriteria(title, description, lines) {
+    const explicitMetrics = extractSuccessMetricLines(lines);
+    if (explicitMetrics.length) {
+        return explicitMetrics.map(line => `- ${line.replace(/^\s*[-*]\s*/,'').trim()}`).join('\n');
+    }
+
+    const summary = description.length > 100 ? description : `${title}: ${description}`;
+    const verb = /reduce|decrease|improve|increase|automate|streamline|remove|eliminate/i.test(summary)
+        ? 'achieves'
+        : 'delivers';
+
+    return [`- The solution ${verb} the expected outcome described in the notes.`, `- Success is measured by delivering the intended value and making the problem easier to solve.`].join('\n');
 }
 
 /**
@@ -164,9 +189,16 @@ function generateArtifact(template, parsedNotes) {
 
     // Handle Acceptance Criteria - bullet point formatting
     if (result.includes('Acceptance Criteria:')) {
-        const acLines = lines.length > 1 ? lines.slice(1) : [description];
+        const acLines = lines.length ? lines : [description];
         const acceptanceCriteria = formatAsAcceptanceCriteria(acLines);
         result = result.replace(/Acceptance Criteria:[\s\S]*?(?=\n\w|$)/m, `Acceptance Criteria:\n${acceptanceCriteria}`);
+    }
+
+    // Handle Success Criteria - infer a fitting metric if notes do not provide one explicitly
+    if (result.includes('Success Criteria:')) {
+        const successLines = extractSuccessMetricLines(lines);
+        const successCriteria = successLines.length ? formatAsAcceptanceCriteria(successLines) : inferSuccessCriteria(title, description, lines);
+        result = result.replace(/Success Criteria:[\s\S]*?(?=\n\w|$)/m, `Success Criteria:\n${successCriteria}`);
     }
 
     // Keep other placeholders as-is (Problem Statement, Business Value, Requirements, etc.)
@@ -263,16 +295,6 @@ function handleSettingsToggle() {
 function showNotification(message) {
     // Simple visual feedback - you could enhance this with a toast
     console.log('✓', message);
-    
-    // Optional: Add brief visual feedback by changing button text
-    const btn = event.target;
-    if (btn && btn.id === 'generateBtn') {
-        const originalText = btn.textContent;
-        btn.textContent = '✓ Generated!';
-        setTimeout(() => {
-            btn.textContent = originalText;
-        }, 1500);
-    }
 }
 
 // ============================================
