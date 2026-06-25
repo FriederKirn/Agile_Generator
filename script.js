@@ -148,6 +148,311 @@ function formatAsAcceptanceCriteria(lines) {
     return lines.map(line => `- ${line.trim()}`).join('\n');
 }
 
+function normalizeText(text) {
+    return text
+        .replace(/\r\n?/g, '\n')
+        .replace(/[\u2022\u2023\u25E6]/g, '-')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function splitIntoFragments(notesText) {
+    const normalized = normalizeText(notesText);
+    if (!normalized) {
+        return [];
+    }
+
+    const paragraphs = normalized
+        .split(/\n\s*\n/)
+        .map(p => p.trim())
+        .filter(Boolean);
+
+    const fragments = [];
+    paragraphs.forEach(paragraph => {
+        const lines = paragraph.split('\n').map(line => line.trim()).filter(Boolean);
+        const bullets = lines.filter(line => /^([\-*]|\d+[\.\)])\s+/.test(line));
+        if (bullets.length === lines.length && lines.length > 1) {
+            bullets.forEach(line => fragments.push(line.replace(/^([\-*]|\d+[\.\)])\s+/, '').trim()));
+        } else {
+            fragments.push(lines.join(' '));
+        }
+    });
+
+    return fragments.filter(Boolean);
+}
+
+function countMatches(text, keywords) {
+    const lower = text.toLowerCase();
+    return keywords.reduce((count, keyword) => {
+        const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const pattern = new RegExp(`\\b${escaped}\\b`, 'i');
+        return count + (pattern.test(lower) ? 1 : 0);
+    }, 0);
+}
+
+function classifyFragment(fragment) {
+    const text = normalizeText(fragment).toLowerCase();
+    const epicKeywords = ['initiative', 'outcome', 'strategy', 'capability', 'theme', 'workflow', 'platform', 'major', 'roadmap', 'vision', 'objective', 'goal', 'problem', 'value'];
+    const featureKeywords = ['allow', 'enable', 'provide', 'support', 'generate', 'configure', 'review', 'publish', 'select', 'edit', 'validate', 'display', 'search', 'filter', 'create', 'manage', 'connect', 'integrate', 'sync', 'approve', 'share', 'import', 'export', 'save'];
+    const requirementKeywords = ['must', 'shall', 'should', 'required', 'only if', 'when', 'then', 'validate', 'warn', 'prevent', 'display', 'store', 'export', 'authenticate', 'authorize', 'error', 'constraint', 'rule', 'condition', 'permission'];
+    const openQuestionKeywords = ['open question', 'should we', 'could we', 'would we', 'is there', 'do we', 'need to decide', 'need to confirm', 'unknown', 'unclear', 'decide', 'decision'];
+
+    if (openQuestionKeywords.some(keyword => text.includes(keyword)) || fragment.trim().endsWith('?')) {
+        return { type: 'open_question', confidenceScore: 0.55, classificationRationale: 'Detected an unresolved question or decision item.' };
+    }
+
+    const epicScore = countMatches(text, epicKeywords);
+    const featureScore = countMatches(text, featureKeywords);
+    const requirementScore = countMatches(text, requirementKeywords) * 1.2;
+
+    let type = 'epic';
+    let rationale = 'No dominant classification keywords detected; defaulting to epic-level backlog item.';
+
+    if (requirementScore >= Math.max(featureScore, epicScore) && requirementScore >= 1) {
+        type = 'requirement';
+        rationale = 'Detected requirement-style phrasing and testable language.';
+    } else if (featureScore >= Math.max(epicScore, requirementScore) && featureScore >= 1) {
+        type = 'feature';
+        rationale = 'Detected feature-level capability wording and user-focused verbs.';
+    } else if (epicScore >= Math.max(featureScore, requirementScore) && epicScore >= 1) {
+        type = 'epic';
+        rationale = 'Detected epic-level outcome, initiative, or thematic wording.';
+    } else if (fragment.split(' ').length <= 10 && requirementScore > 0) {
+        type = 'requirement';
+        rationale = 'Short note with requirement-like wording.';
+    } else if (featureScore > 0) {
+        type = 'feature';
+        rationale = 'Contains capability-oriented wording.';
+    }
+
+    const confidenceScore = Math.min(0.95, Math.max(0.35, 0.3 + Math.max(epicScore, featureScore, requirementScore) * 0.12));
+    return { type, confidenceScore, classificationRationale: rationale };
+}
+
+function extractTitle(fragment, type) {
+    let title = fragment.replace(/^([\-*]|\d+[\.\)])\s+/, '').trim();
+    title = title.replace(/^(As a user|As an admin|As a .*?,)\s*/i, '');
+    title = title.replace(/^(The system|System|Application|App)\s+/i, '');
+    title = title.replace(/[.?!]$/, '').trim();
+
+    if (!title) {
+        return type === 'epic' ? 'Inferred Epic' : type === 'feature' ? 'Inferred Feature' : 'Inferred Requirement';
+    }
+    return title.length > 120 ? `${title.slice(0, 120).trim()}...` : title;
+}
+
+function extractAcceptanceCriteria(text) {
+    const sentences = text.split(/[.?!]\s*/).map(s => s.trim()).filter(Boolean);
+    if (sentences.length > 1) {
+        return sentences.map(s => s);
+    }
+    if (/\b(given|when|then|should|must)\b/i.test(text)) {
+        return [text.trim()];
+    }
+    return [];
+}
+
+function createBacklogItem(fragment, index) {
+    const classification = classifyFragment(fragment);
+    const type = classification.type;
+    const title = extractTitle(fragment, type);
+    const now = new Date().toISOString();
+
+    const item = {
+        id: `${type.toUpperCase().slice(0, 4)}-${String(index).padStart(3, '0')}`,
+        type,
+        title,
+        parentId: null,
+        children: [],
+        sourceNoteIds: [`NOTE-${String(index).padStart(3, '0')}`],
+        sourceSnippets: [fragment.trim()],
+        classificationRationale: classification.classificationRationale,
+        confidenceScore: classification.confidenceScore,
+        inferred: false,
+        status: 'draft',
+        createdAt: now,
+        updatedAt: now,
+        rawText: fragment.trim(),
+        fields: {}
+    };
+
+    if (type === 'epic') {
+        item.fields = {
+            summary: fragment.trim(),
+            problem_statement: '',
+            business_value: '',
+            user_value: '',
+            scope: '',
+            out_of_scope: '',
+            related_notes: [fragment.trim()],
+            confidence_score: classification.confidenceScore
+        };
+    } else if (type === 'feature') {
+        item.fields = {
+            summary: fragment.trim(),
+            user_goal: fragment.trim(),
+            functional_description: '',
+            priority: 'Medium',
+            dependencies: [],
+            assumptions: [],
+            related_notes: [fragment.trim()],
+            confidence_score: classification.confidenceScore
+        };
+    } else if (type === 'requirement') {
+        item.fields = {
+            requirement_statement: fragment.trim(),
+            type: 'Functional',
+            acceptance_criteria: extractAcceptanceCriteria(fragment),
+            source_note_references: [`NOTE-${String(index).padStart(3, '0')}`],
+            priority: 'Medium',
+            validation_rules: [],
+            confidence_score: classification.confidenceScore
+        };
+    } else {
+        item.fields = {
+            summary: fragment.trim(),
+            note_type: type,
+            confidence_score: classification.confidenceScore
+        };
+    }
+
+    return item;
+}
+
+function countKeywordOverlap(source, target) {
+    const left = new Set(normalizeText(source).toLowerCase().match(/\b[a-z]{4,}\b/g) || []);
+    const right = new Set(normalizeText(target).toLowerCase().match(/\b[a-z]{4,}\b/g) || []);
+    let overlap = 0;
+    left.forEach(word => {
+        if (right.has(word)) {
+            overlap += 1;
+        }
+    });
+    return overlap;
+}
+
+function findBestParent(child, parents) {
+    let best = null;
+    let bestScore = 0;
+    parents.forEach(parent => {
+        const score = countKeywordOverlap(child.rawText, parent.rawText);
+        if (score > bestScore) {
+            bestScore = score;
+            best = parent;
+        }
+    });
+    return bestScore > 0 ? best : null;
+}
+
+function generateInferredItem(type, referenceItem, titleSuffix) {
+    const title = `Inferred ${type.charAt(0).toUpperCase() + type.slice(1)}${titleSuffix ? `: ${titleSuffix}` : ''}`;
+    const now = new Date().toISOString();
+    return {
+        id: `${type.toUpperCase().slice(0, 4)}-INF-${String(Math.floor(Math.random() * 1000)).padStart(3, '0')}`,
+        type,
+        title,
+        parentId: null,
+        children: [],
+        sourceNoteIds: referenceItem ? referenceItem.sourceNoteIds.slice() : [],
+        sourceSnippets: referenceItem ? referenceItem.sourceSnippets.slice() : [],
+        classificationRationale: `Inferred ${type} to preserve hierarchy for related backlog items.`,
+        confidenceScore: 0.45,
+        inferred: true,
+        status: 'draft',
+        createdAt: now,
+        updatedAt: now,
+        rawText: referenceItem ? referenceItem.rawText : '',
+        fields: type === 'epic' ? {
+            summary: referenceItem ? referenceItem.rawText : 'Inferred epic from note context.',
+            problem_statement: '',
+            business_value: '',
+            user_value: '',
+            scope: '',
+            out_of_scope: '',
+            related_notes: referenceItem ? referenceItem.sourceSnippets.slice() : [],
+            confidence_score: 0.45
+        } : type === 'feature' ? {
+            summary: referenceItem ? referenceItem.rawText : 'Inferred feature from note context.',
+            user_goal: '',
+            functional_description: '',
+            priority: 'Medium',
+            dependencies: [],
+            assumptions: [],
+            related_notes: referenceItem ? referenceItem.sourceSnippets.slice() : [],
+            confidence_score: 0.45
+        } : {
+            requirement_statement: referenceItem ? referenceItem.rawText : 'Inferred requirement from note context.',
+            type: 'Functional',
+            acceptance_criteria: [],
+            source_note_references: referenceItem ? referenceItem.sourceNoteIds.slice() : [],
+            priority: 'Medium',
+            validation_rules: [],
+            confidence_score: 0.45
+        }
+    };
+}
+
+function detectTopics(items) {
+    const keywordCounts = {};
+    items.forEach(item => {
+        normalizeText(item.rawText).split(/\s+/).forEach(word => {
+            if (word.length >= 4) {
+                keywordCounts[word] = (keywordCounts[word] || 0) + 1;
+            }
+        });
+    });
+
+    return Object.entries(keywordCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 4)
+        .map(([keyword], index) => ({
+            id: `TOPIC-${String(index + 1).padStart(3, '0')}`,
+            name: keyword,
+            description: `Notes related to ${keyword}.`, 
+            source_note_ids: items.filter(item => normalizeText(item.rawText).includes(keyword)).flatMap(item => item.sourceNoteIds)
+        }));
+}
+
+function formatBacklogTree(item, depth = 0) {
+    const indent = '  '.repeat(depth);
+    const inferredTag = item.inferred ? ' (inferred)' : '';
+    const header = `${indent}${item.type.charAt(0).toUpperCase() + item.type.slice(1)}: ${item.title}${inferredTag} [confidence=${item.confidenceScore.toFixed(2)}]`;
+    const lines = [header];
+    item.children.forEach(child => {
+        lines.push(formatBacklogTree(child, depth + 1));
+    });
+    return lines.join('\n');
+}
+
+function formatBacklogResult(result) {
+    const lines = [`Summary: ${result.summary}`];
+
+    if (result.detected_topics.length) {
+        lines.push('\nDetected topics:');
+        result.detected_topics.forEach(topic => {
+            lines.push(`- ${topic.name} (${topic.source_note_ids.length} note refs)`);
+        });
+    }
+
+    if (result.backlog_items.length) {
+        lines.push('\nBacklog Structure:');
+        result.backlog_items.forEach(item => {
+            if (!item.parentId) {
+                lines.push(formatBacklogTree(item));
+            }
+        });
+    }
+
+    if (result.open_questions.length) {
+        lines.push('\nOpen Questions:');
+        result.open_questions.forEach(question => {
+            lines.push(`- ${question.rawText} [confidence=${question.confidenceScore.toFixed(2)}]`);
+        });
+    }
+
+    return lines.join('\n');
+}
+
 function extractSuccessMetricLines(lines) {
     return lines.filter(line => /success|metric|measure|goal|outcome|KPI|criterion|criteria/i.test(line));
 }
@@ -164,6 +469,74 @@ function inferSuccessCriteria(title, description, lines) {
         : 'delivers';
 
     return [`- The solution ${verb} the expected outcome described in the notes.`, `- Success is measured by delivering the intended value and making the problem easier to solve.`].join('\n');
+}
+
+function generateBacklog(notesText) {
+    const fragments = splitIntoFragments(notesText);
+    const items = fragments.map((fragment, index) => createBacklogItem(fragment, index + 1));
+
+    const epics = items.filter(item => item.type === 'epic');
+    const features = items.filter(item => item.type === 'feature');
+    const requirements = items.filter(item => item.type === 'requirement');
+    const openQuestions = items.filter(item => item.type === 'open_question');
+
+    features.forEach(feature => {
+        if (!feature.parentId) {
+            const parent = findBestParent(feature, epics);
+            if (parent) {
+                feature.parentId = parent.id;
+                parent.children.push(feature);
+            }
+        }
+    });
+
+    requirements.forEach(requirement => {
+        if (!requirement.parentId) {
+            const parentFeature = findBestParent(requirement, features);
+            if (parentFeature) {
+                requirement.parentId = parentFeature.id;
+                parentFeature.children.push(requirement);
+            }
+        }
+    });
+
+    if (features.length > 0 && epics.length === 0) {
+        const inferredEpic = generateInferredItem('epic', features[0], 'Consolidated work from notes');
+        epics.push(inferredEpic);
+        items.push(inferredEpic);
+        features.forEach(feature => {
+            if (!feature.parentId) {
+                feature.parentId = inferredEpic.id;
+                inferredEpic.children.push(feature);
+            }
+        });
+    }
+
+    if (requirements.length > 0 && features.length === 0) {
+        const inferredFeature = generateInferredItem('feature', requirements[0], 'Inferred feature for requirements');
+        features.push(inferredFeature);
+        items.push(inferredFeature);
+        if (epics.length === 1) {
+            inferredFeature.parentId = epics[0].id;
+            epics[0].children.push(inferredFeature);
+        }
+        requirements.forEach(requirement => {
+            if (!requirement.parentId) {
+                requirement.parentId = inferredFeature.id;
+                inferredFeature.children.push(requirement);
+            }
+        });
+    }
+
+    const rootItems = epics.length ? epics : features.length ? features : requirements;
+    const detectedTopics = detectTopics(items);
+
+    return {
+        summary: `Generated ${rootItems.length} backlog item(s) from notes.`,
+        detected_topics: detectedTopics,
+        backlog_items: rootItems,
+        open_questions: openQuestions
+    };
 }
 
 /**
@@ -216,7 +589,7 @@ function generateArtifact(template, parsedNotes) {
  */
 function handleGenerate() {
     const notesInput = document.getElementById('notesInput').value;
-    const artifactType = document.getElementById('artifactType').value;
+    const outputMode = document.getElementById('artifactType').value;
     const outputElement = document.getElementById('output');
 
     if (!notesInput.trim()) {
@@ -224,8 +597,15 @@ function handleGenerate() {
         return;
     }
 
+    if (outputMode === 'backlog') {
+        const backlog = generateBacklog(notesInput);
+        outputElement.textContent = formatBacklogResult(backlog);
+        showNotification('Backlog structure generated successfully!');
+        return;
+    }
+
     const parsedNotes = parseNotes(notesInput);
-    const template = templates[artifactType];
+    const template = templates[outputMode];
     const result = generateArtifact(template, parsedNotes);
 
     outputElement.textContent = result;
