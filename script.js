@@ -488,34 +488,118 @@ function formatBacklogResult(result) {
     const epicCount = countItems(result.backlog_items, 'epic');
     const featureCount = countItems(result.backlog_items, 'feature');
     const requirementCount = countItems(result.backlog_items, 'requirement');
-    const lines = [`Summary: ${result.summary}`];
-    lines.push(`Detected: ${epicCount} epic(s), ${featureCount} feature(s), ${requirementCount} requirement(s).`);
-    lines.push('All requirements are attached to features and all features are attached to epics.');
+    return `Summary: ${result.summary}\nDetected: ${epicCount} epic(s), ${featureCount} feature(s), ${requirementCount} requirement(s).\nAll requirements are attached to features and all features are attached to epics.`;
+}
+
+function renderBacklogItem(item, depth = 0) {
+    const details = document.createElement('details');
+    details.className = 'tree-item';
+    if (depth === 0) {
+        details.open = true;
+    }
+
+    const summary = document.createElement('summary');
+    summary.textContent = `${capitalize(item.type)}: ${item.title}`;
+    details.appendChild(summary);
+
+    const content = document.createElement('div');
+    content.className = 'tree-item-content';
+
+    if (item.type === 'epic') {
+        const summaryText = document.createElement('p');
+        summaryText.textContent = item.fields.summary || item.rawText;
+        content.appendChild(summaryText);
+    }
+    if (item.type === 'feature') {
+        const goal = document.createElement('p');
+        goal.innerHTML = `<strong>User Goal:</strong> ${item.fields.user_goal || item.fields.summary}`;
+        content.appendChild(goal);
+
+        const featureDesc = document.createElement('p');
+        featureDesc.innerHTML = `<strong>Description:</strong> ${item.fields.summary}`;
+        content.appendChild(featureDesc);
+    }
+    if (item.type === 'requirement') {
+        const statement = document.createElement('p');
+        statement.innerHTML = `<strong>Requirement:</strong> ${item.fields.requirement_statement}`;
+        content.appendChild(statement);
+
+        if (item.fields.acceptance_criteria && item.fields.acceptance_criteria.length) {
+            const acSection = document.createElement('div');
+            acSection.className = 'tree-section';
+            acSection.innerHTML = `<strong>Acceptance Criteria:</strong>`;
+            const list = document.createElement('ul');
+            list.className = 'tree-list';
+            item.fields.acceptance_criteria.forEach(ac => {
+                const li = document.createElement('li');
+                li.textContent = ac;
+                list.appendChild(li);
+            });
+            acSection.appendChild(list);
+            content.appendChild(acSection);
+        }
+    }
+
+    if (item.children && item.children.length) {
+        item.children.forEach(child => {
+            content.appendChild(renderBacklogItem(child, depth + 1));
+        });
+    }
+
+    details.appendChild(content);
+    return details;
+}
+
+function renderBacklogResult(result) {
+    const container = document.createElement('div');
+    const summaryBlock = document.createElement('div');
+    summaryBlock.className = 'output-summary';
+    const epicCount = countItems(result.backlog_items, 'epic');
+    const featureCount = countItems(result.backlog_items, 'feature');
+    const requirementCount = countItems(result.backlog_items, 'requirement');
+    summaryBlock.innerHTML = `<p><strong>${result.summary}</strong></p><p>Detected: ${epicCount} epic(s), ${featureCount} feature(s), ${requirementCount} requirement(s).</p>`;
+    container.appendChild(summaryBlock);
 
     if (result.detected_topics.length) {
-        lines.push('\nDetected topics:');
+        const topicsBlock = document.createElement('div');
+        topicsBlock.className = 'output-topics';
+        topicsBlock.innerHTML = '<strong>Detected topics:</strong>';
+        const list = document.createElement('ul');
+        list.className = 'tree-list';
         result.detected_topics.forEach(topic => {
-            lines.push(`- ${topic.name} (${topic.source_note_ids.length} note refs)`);
+            const li = document.createElement('li');
+            li.textContent = `${topic.name} (${topic.source_note_ids.length} note refs)`;
+            list.appendChild(li);
         });
+        topicsBlock.appendChild(list);
+        container.appendChild(topicsBlock);
     }
 
-    if (result.backlog_items.length) {
-        lines.push('\nBacklog Structure:');
-        result.backlog_items.forEach(item => {
-            if (!item.parentId) {
-                lines.push(formatBacklogTree(item));
-            }
-        });
-    }
+    const treeContainer = document.createElement('div');
+    treeContainer.className = 'backlog-tree';
+    result.backlog_items.forEach(item => {
+        if (!item.parentId) {
+            treeContainer.appendChild(renderBacklogItem(item));
+        }
+    });
+    container.appendChild(treeContainer);
 
     if (result.open_questions.length) {
-        lines.push('\nOpen Questions:');
+        const questionsBlock = document.createElement('div');
+        questionsBlock.className = 'output-questions';
+        questionsBlock.innerHTML = '<strong>Open Questions:</strong>';
+        const list = document.createElement('ul');
+        list.className = 'tree-list';
         result.open_questions.forEach(question => {
-            lines.push(`- ${question.rawText} [confidence=${question.confidenceScore.toFixed(2)}]`);
+            const li = document.createElement('li');
+            li.textContent = `${question.rawText} [confidence=${question.confidenceScore.toFixed(2)}]`;
+            list.appendChild(li);
         });
+        questionsBlock.appendChild(list);
+        container.appendChild(questionsBlock);
     }
 
-    return lines.join('\n');
+    return container;
 }
 
 function selectBestParent(child, parents) {
@@ -687,13 +771,14 @@ function handleGenerate() {
     const notesInput = document.getElementById('notesInput').value;
     const outputElement = document.getElementById('output');
 
+    outputElement.innerHTML = '';
     if (!notesInput.trim()) {
         outputElement.textContent = 'Please enter some notes to generate a backlog structure.';
         return;
     }
 
     const backlog = generateBacklog(notesInput);
-    outputElement.textContent = formatBacklogResult(backlog);
+    outputElement.appendChild(renderBacklogResult(backlog));
     showNotification('Backlog structure generated successfully!');
 }
 
