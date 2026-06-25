@@ -8,20 +8,30 @@
 
 const DEFAULT_TEMPLATES = {
     epic: `Title:
-Description:
+Summary:
 Problem Statement:
 Business Value:
-Success Criteria:`,
+User Value:
+Scope:
+Out of Scope:
+Success Criteria:
+Related Notes:`,
     
     feature: `Title:
-Description:
-User Story:
+Summary:
+User Goal:
+Functional Description:
+Priority:
+Dependencies:
+Assumptions:
 Acceptance Criteria:`,
     
     requirement: `Title:
-Description:
 Requirement:
-Acceptance Criteria:`
+Acceptance Criteria:
+Priority:
+Validation Rules:
+Source Note References:`
 };
 
 // ============================================
