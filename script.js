@@ -152,8 +152,17 @@ function normalizeText(text) {
     return text
         .replace(/\r\n?/g, '\n')
         .replace(/[\u2022\u2023\u25E6]/g, '-')
+        .replace(/\t/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
+}
+
+function cleanConversationFragment(fragment) {
+    let cleaned = fragment.replace(/(^|\n)[A-Z][a-z0-9]+(?: [A-Z][a-z0-9]+)?:\s*/g, '$1');
+    cleaned = cleaned.replace(/(^|\n)\s*[-_*]{3,}\s*(?=\n|$)/g, '$1');
+    cleaned = cleaned.replace(/(^|\n)\s*[-*]\s+/g, '$1');
+    cleaned = cleaned.replace(/\s+/g, ' ').trim();
+    return cleaned;
 }
 
 function splitIntoFragments(notesText) {
@@ -172,9 +181,13 @@ function splitIntoFragments(notesText) {
         const lines = paragraph.split('\n').map(line => line.trim()).filter(Boolean);
         const bullets = lines.filter(line => /^([\-*]|\d+[\.\)])\s+/.test(line));
         if (bullets.length === lines.length && lines.length > 1) {
-            bullets.forEach(line => fragments.push(line.replace(/^([\-*]|\d+[\.\)])\s+/, '').trim()));
+            bullets.forEach(line => {
+                const cleanedLine = cleanConversationFragment(line.replace(/^([\-*]|\d+[\.\)])\s+/, '').trim());
+                if (cleanedLine) fragments.push(cleanedLine);
+            });
         } else {
-            fragments.push(lines.join(' '));
+            const cleanedParagraph = cleanConversationFragment(lines.join(' '));
+            if (cleanedParagraph) fragments.push(cleanedParagraph);
         }
     });
 
@@ -192,10 +205,10 @@ function countMatches(text, keywords) {
 
 function classifyFragment(fragment) {
     const text = normalizeText(fragment).toLowerCase();
-    const epicKeywords = ['initiative', 'outcome', 'strategy', 'capability', 'theme', 'workflow', 'platform', 'major', 'roadmap', 'vision', 'objective', 'goal', 'problem', 'value', 'improve', 'enhance', 'simplify', 'streamline', 'automate'];
-    const featureKeywords = ['allow', 'enable', 'provide', 'support', 'generate', 'manage', 'create', 'update', 'configure', 'review', 'publish', 'select', 'edit', 'validate', 'display', 'search', 'filter', 'connect', 'integrate', 'sync', 'approve', 'share', 'import', 'export', 'save'];
-    const requirementKeywords = ['must', 'shall', 'should', 'required', 'only if', 'when', 'then', 'validate', 'warn', 'prevent', 'display', 'store', 'export', 'authenticate', 'authorize', 'error', 'constraint', 'rule', 'condition', 'permission', 'if'];
-    const openQuestionKeywords = ['open question', 'should we', 'could we', 'would we', 'is there', 'do we', 'need to decide', 'need to confirm', 'unknown', 'unclear', 'decide', 'decision'];
+    const epicKeywords = ['initiative', 'outcome', 'strategy', 'capability', 'theme', 'workflow', 'platform', 'major', 'roadmap', 'vision', 'objective', 'goal', 'problem', 'value', 'improve', 'enhance', 'simplify', 'streamline', 'automate', 'consistency', 'inconsistent', 'performance', 'preview', 'template', 'versioning', 'annotation', 'annotations', 'usability', 'experience'];
+    const featureKeywords = ['allow', 'enable', 'provide', 'support', 'generate', 'manage', 'create', 'update', 'configure', 'review', 'publish', 'select', 'edit', 'validate', 'display', 'search', 'filter', 'connect', 'integrate', 'sync', 'approve', 'share', 'import', 'export', 'save', 'preview', 'template', 'versioning', 'annotation', 'annotations', 'checklist', 'tree', 'background', 'detect', 'suggest', 'block', 'warning', 'prevent'];
+    const requirementKeywords = ['must', 'shall', 'should', 'required', 'required inputs', 'input', 'only if', 'when', 'then', 'validate', 'warn', 'prevent', 'display', 'store', 'export', 'authenticate', 'authorize', 'error', 'constraint', 'rule', 'condition', 'permission', 'if', 'block', 'warning', 'validation', 'versioning'];
+    const openQuestionKeywords = ['open question', 'should we', 'could we', 'would we', 'is there', 'do we', 'need to decide', 'need to confirm', 'unknown', 'unclear', 'decide', 'decision', 'question'];
 
     if (openQuestionKeywords.some(keyword => text.includes(keyword)) || fragment.trim().endsWith('?')) {
         return { type: 'open_question', confidenceScore: 0.55, classificationRationale: 'Detected an unresolved question or decision item.' };
@@ -221,8 +234,8 @@ function classifyFragment(fragment) {
     if (words <= 10 && requirementScore > 0) {
         return { type: 'requirement', confidenceScore: 0.55, classificationRationale: 'Short requirement-like fragment.' };
     }
-    if (featureScore > 0) {
-        return { type: 'feature', confidenceScore: 0.5, classificationRationale: 'Fragment resembles a capability statement.' };
+    if (featureScore > 0 || /\b(preview|template|versioning|annotation|checklist|tree|export|support|validation|blocking|prevent|error|warning|background)\b/i.test(text)) {
+        return { type: 'feature', confidenceScore: 0.55, classificationRationale: 'Fragment resembles a capability or product behavior.' };
     }
 
     return { type: 'epic', confidenceScore: 0.45, classificationRationale: 'Defaulting to epic-level outcome when no clear lower-level classification applies.' };
