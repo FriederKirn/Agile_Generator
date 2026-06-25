@@ -192,9 +192,9 @@ function countMatches(text, keywords) {
 
 function classifyFragment(fragment) {
     const text = normalizeText(fragment).toLowerCase();
-    const epicKeywords = ['initiative', 'outcome', 'strategy', 'capability', 'theme', 'workflow', 'platform', 'major', 'roadmap', 'vision', 'objective', 'goal', 'problem', 'value'];
-    const featureKeywords = ['allow', 'enable', 'provide', 'support', 'generate', 'configure', 'review', 'publish', 'select', 'edit', 'validate', 'display', 'search', 'filter', 'create', 'manage', 'connect', 'integrate', 'sync', 'approve', 'share', 'import', 'export', 'save'];
-    const requirementKeywords = ['must', 'shall', 'should', 'required', 'only if', 'when', 'then', 'validate', 'warn', 'prevent', 'display', 'store', 'export', 'authenticate', 'authorize', 'error', 'constraint', 'rule', 'condition', 'permission'];
+    const epicKeywords = ['initiative', 'outcome', 'strategy', 'capability', 'theme', 'workflow', 'platform', 'major', 'roadmap', 'vision', 'objective', 'goal', 'problem', 'value', 'improve', 'enhance', 'simplify', 'streamline', 'automate'];
+    const featureKeywords = ['allow', 'enable', 'provide', 'support', 'generate', 'manage', 'create', 'update', 'configure', 'review', 'publish', 'select', 'edit', 'validate', 'display', 'search', 'filter', 'connect', 'integrate', 'sync', 'approve', 'share', 'import', 'export', 'save'];
+    const requirementKeywords = ['must', 'shall', 'should', 'required', 'only if', 'when', 'then', 'validate', 'warn', 'prevent', 'display', 'store', 'export', 'authenticate', 'authorize', 'error', 'constraint', 'rule', 'condition', 'permission', 'if'];
     const openQuestionKeywords = ['open question', 'should we', 'could we', 'would we', 'is there', 'do we', 'need to decide', 'need to confirm', 'unknown', 'unclear', 'decide', 'decision'];
 
     if (openQuestionKeywords.some(keyword => text.includes(keyword)) || fragment.trim().endsWith('?')) {
@@ -203,30 +203,29 @@ function classifyFragment(fragment) {
 
     const epicScore = countMatches(text, epicKeywords);
     const featureScore = countMatches(text, featureKeywords);
-    const requirementScore = countMatches(text, requirementKeywords) * 1.2;
-
-    let type = 'epic';
-    let rationale = 'No dominant classification keywords detected; defaulting to epic-level backlog item.';
+    const requirementScore = countMatches(text, requirementKeywords) * 1.3;
 
     if (requirementScore >= Math.max(featureScore, epicScore) && requirementScore >= 1) {
-        type = 'requirement';
-        rationale = 'Detected requirement-style phrasing and testable language.';
-    } else if (featureScore >= Math.max(epicScore, requirementScore) && featureScore >= 1) {
-        type = 'feature';
-        rationale = 'Detected feature-level capability wording and user-focused verbs.';
-    } else if (epicScore >= Math.max(featureScore, requirementScore) && epicScore >= 1) {
-        type = 'epic';
-        rationale = 'Detected epic-level outcome, initiative, or thematic wording.';
-    } else if (fragment.split(' ').length <= 10 && requirementScore > 0) {
-        type = 'requirement';
-        rationale = 'Short note with requirement-like wording.';
-    } else if (featureScore > 0) {
-        type = 'feature';
-        rationale = 'Contains capability-oriented wording.';
+        return { type: 'requirement', confidenceScore: Math.min(0.95, 0.4 + requirementScore * 0.1), classificationRationale: 'Detected specific, testable requirement phrasing.' };
     }
 
-    const confidenceScore = Math.min(0.95, Math.max(0.35, 0.3 + Math.max(epicScore, featureScore, requirementScore) * 0.12));
-    return { type, confidenceScore, classificationRationale: rationale };
+    if (featureScore >= Math.max(epicScore, requirementScore) && featureScore >= 1) {
+        return { type: 'feature', confidenceScore: Math.min(0.95, 0.35 + featureScore * 0.1), classificationRationale: 'Detected user-facing capability language.' };
+    }
+
+    if (epicScore >= Math.max(featureScore, requirementScore) && epicScore >= 1) {
+        return { type: 'epic', confidenceScore: Math.min(0.95, 0.35 + epicScore * 0.1), classificationRationale: 'Detected outcome-oriented or initiative language.' };
+    }
+
+    const words = fragment.split(/\s+/).filter(Boolean).length;
+    if (words <= 10 && requirementScore > 0) {
+        return { type: 'requirement', confidenceScore: 0.55, classificationRationale: 'Short requirement-like fragment.' };
+    }
+    if (featureScore > 0) {
+        return { type: 'feature', confidenceScore: 0.5, classificationRationale: 'Fragment resembles a capability statement.' };
+    }
+
+    return { type: 'epic', confidenceScore: 0.45, classificationRationale: 'Defaulting to epic-level outcome when no clear lower-level classification applies.' };
 }
 
 function extractTitle(fragment, type) {
@@ -239,6 +238,43 @@ function extractTitle(fragment, type) {
         return type === 'epic' ? 'Inferred Epic' : type === 'feature' ? 'Inferred Feature' : 'Inferred Requirement';
     }
     return title.length > 120 ? `${title.slice(0, 120).trim()}...` : title;
+}
+
+function capitalize(text) {
+    if (!text) return '';
+    return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function lowerFirst(text) {
+    if (!text) return '';
+    return text.charAt(0).toLowerCase() + text.slice(1);
+}
+
+function formatTitleForType(fragment, type) {
+    const cleaned = extractTitle(fragment, type);
+    if (type === 'requirement') {
+        if (/^(the system must|must|shall|should|when|if|given|then)\b/i.test(cleaned)) {
+            return capitalize(cleaned);
+        }
+        return capitalize(`The system must ${lowerFirst(cleaned)}`);
+    }
+
+    if (type === 'feature') {
+        if (/^(allow|enable|provide|support|generate|manage|create|update|configure|review|publish|select|edit|validate|display|search|filter|connect|integrate|sync|approve|share|import|export|save)\b/i.test(cleaned)) {
+            return capitalize(cleaned);
+        }
+        return capitalize(`Enable users to ${lowerFirst(cleaned)}`);
+    }
+
+    if (type === 'epic') {
+        const noIntro = cleaned.replace(/^(we need|need to|need|allow us to|allow us|allows us to|helps us to|we should|we want to)\s+/i, '');
+        if (/^(improve|increase|reduce|streamline|automate|enhance|simplify|enable|support|provide)\b/i.test(noIntro)) {
+            return capitalize(noIntro);
+        }
+        return capitalize(`Improve ${lowerFirst(noIntro)}`);
+    }
+
+    return capitalize(cleaned);
 }
 
 function extractAcceptanceCriteria(text) {
@@ -255,7 +291,7 @@ function extractAcceptanceCriteria(text) {
 function createBacklogItem(fragment, index) {
     const classification = classifyFragment(fragment);
     const type = classification.type;
-    const title = extractTitle(fragment, type);
+    const title = formatTitleForType(fragment, type);
     const now = new Date().toISOString();
 
     const item = {
@@ -331,19 +367,6 @@ function countKeywordOverlap(source, target) {
     return overlap;
 }
 
-function findBestParent(child, parents) {
-    let best = null;
-    let bestScore = 0;
-    parents.forEach(parent => {
-        const score = countKeywordOverlap(child.rawText, parent.rawText);
-        if (score > bestScore) {
-            bestScore = score;
-            best = parent;
-        }
-    });
-    return bestScore > 0 ? best : null;
-}
-
 function generateInferredItem(type, referenceItem, titleSuffix) {
     const title = `Inferred ${type.charAt(0).toUpperCase() + type.slice(1)}${titleSuffix ? `: ${titleSuffix}` : ''}`;
     const now = new Date().toISOString();
@@ -413,11 +436,35 @@ function detectTopics(items) {
         }));
 }
 
+function countItems(items, type) {
+    let count = 0;
+    items.forEach(item => {
+        if (item.type === type) count += 1;
+        if (item.children && item.children.length) {
+            count += countItems(item.children, type);
+        }
+    });
+    return count;
+}
+
 function formatBacklogTree(item, depth = 0) {
     const indent = '  '.repeat(depth);
     const inferredTag = item.inferred ? ' (inferred)' : '';
-    const header = `${indent}${item.type.charAt(0).toUpperCase() + item.type.slice(1)}: ${item.title}${inferredTag} [confidence=${item.confidenceScore.toFixed(2)}]`;
+    const header = `${indent}${item.type.charAt(0).toUpperCase() + item.type.slice(1)}: ${item.title}${inferredTag}`;
     const lines = [header];
+
+    if (item.type === 'feature' && item.fields && item.fields.user_goal) {
+        lines.push(`${indent}  User Goal: ${item.fields.user_goal}`);
+        lines.push(`${indent}  Description: ${item.fields.summary}`);
+    }
+    if (item.type === 'requirement' && item.fields && item.fields.requirement_statement) {
+        lines.push(`${indent}  Statement: ${item.fields.requirement_statement}`);
+        if (item.fields.acceptance_criteria && item.fields.acceptance_criteria.length) {
+            lines.push(`${indent}  Acceptance Criteria:`);
+            item.fields.acceptance_criteria.forEach(ac => lines.push(`${indent}  - ${ac}`));
+        }
+    }
+
     item.children.forEach(child => {
         lines.push(formatBacklogTree(child, depth + 1));
     });
@@ -425,7 +472,12 @@ function formatBacklogTree(item, depth = 0) {
 }
 
 function formatBacklogResult(result) {
+    const epicCount = countItems(result.backlog_items, 'epic');
+    const featureCount = countItems(result.backlog_items, 'feature');
+    const requirementCount = countItems(result.backlog_items, 'requirement');
     const lines = [`Summary: ${result.summary}`];
+    lines.push(`Detected: ${epicCount} epic(s), ${featureCount} feature(s), ${requirementCount} requirement(s).`);
+    lines.push('All requirements are attached to features and all features are attached to epics.');
 
     if (result.detected_topics.length) {
         lines.push('\nDetected topics:');
@@ -453,6 +505,105 @@ function formatBacklogResult(result) {
     return lines.join('\n');
 }
 
+function selectBestParent(child, parents) {
+    let bestParent = null;
+    let bestScore = 0;
+    const childKeywords = new Set(normalizeText(child.rawText).toLowerCase().split(/\s+/));
+    parents.forEach(parent => {
+        const parentKeywords = new Set(normalizeText(parent.rawText).toLowerCase().split(/\s+/));
+        const score = [...childKeywords].reduce((sum, word) => sum + (parentKeywords.has(word) ? 1 : 0), 0);
+        if (score > bestScore) {
+            bestScore = score;
+            bestParent = parent;
+        }
+    });
+    return bestParent;
+}
+
+function generateBacklog(notesText) {
+    const fragments = splitIntoFragments(notesText);
+    const uniqueFragments = [...new Map(fragments.map(fragment => [normalizeText(fragment), fragment])).values()];
+    const items = uniqueFragments.map((fragment, index) => createBacklogItem(fragment, index + 1));
+    const epics = items.filter(item => item.type === 'epic');
+    const features = items.filter(item => item.type === 'feature');
+    const requirements = items.filter(item => item.type === 'requirement');
+    const openQuestions = items.filter(item => item.type === 'open_question');
+
+    features.forEach(feature => {
+        if (!feature.parentId) {
+            const parent = selectBestParent(feature, epics);
+            if (parent) {
+                feature.parentId = parent.id;
+                parent.children.push(feature);
+            }
+        }
+    });
+
+    requirements.forEach(requirement => {
+        if (!requirement.parentId) {
+            const parentFeature = selectBestParent(requirement, features);
+            if (parentFeature) {
+                requirement.parentId = parentFeature.id;
+                parentFeature.children.push(requirement);
+            }
+        }
+    });
+
+    if (features.length > 0 && epics.length === 0) {
+        const inferredEpic = generateInferredItem('epic', features[0], 'Inferred epic from note clusters');
+        epics.push(inferredEpic);
+        items.push(inferredEpic);
+        features.forEach(feature => {
+            if (!feature.parentId) {
+                feature.parentId = inferredEpic.id;
+                inferredEpic.children.push(feature);
+            }
+        });
+    }
+
+    if (requirements.length > 0 && features.length === 0) {
+        const inferredFeature = generateInferredItem('feature', requirements[0], 'Inferred feature for requirements');
+        features.push(inferredFeature);
+        items.push(inferredFeature);
+        if (epics.length > 0) {
+            inferredFeature.parentId = epics[0].id;
+            epics[0].children.push(inferredFeature);
+        }
+        requirements.forEach(requirement => {
+            if (!requirement.parentId) {
+                requirement.parentId = inferredFeature.id;
+                inferredFeature.children.push(requirement);
+            }
+        });
+    }
+
+    if (requirements.length > 0 && features.length > 0) {
+        requirements.forEach(requirement => {
+            if (!requirement.parentId) {
+                const inferredFeature = generateInferredItem('feature', requirement, 'Inferred feature for requirement');
+                features.push(inferredFeature);
+                items.push(inferredFeature);
+                if (epics.length > 0) {
+                    inferredFeature.parentId = epics[0].id;
+                    epics[0].children.push(inferredFeature);
+                }
+                requirement.parentId = inferredFeature.id;
+                inferredFeature.children.push(requirement);
+            }
+        });
+    }
+
+    const rootItems = epics.length ? epics : features.length ? features : requirements;
+    const detectedTopics = detectTopics(items);
+
+    return {
+        summary: 'Generated structured backlog using Epic > Feature > Requirement hierarchy.',
+        detected_topics: detectedTopics,
+        backlog_items: rootItems,
+        open_questions: openQuestions
+    };
+}
+
 function extractSuccessMetricLines(lines) {
     return lines.filter(line => /success|metric|measure|goal|outcome|KPI|criterion|criteria/i.test(line));
 }
@@ -469,74 +620,6 @@ function inferSuccessCriteria(title, description, lines) {
         : 'delivers';
 
     return [`- The solution ${verb} the expected outcome described in the notes.`, `- Success is measured by delivering the intended value and making the problem easier to solve.`].join('\n');
-}
-
-function generateBacklog(notesText) {
-    const fragments = splitIntoFragments(notesText);
-    const items = fragments.map((fragment, index) => createBacklogItem(fragment, index + 1));
-
-    const epics = items.filter(item => item.type === 'epic');
-    const features = items.filter(item => item.type === 'feature');
-    const requirements = items.filter(item => item.type === 'requirement');
-    const openQuestions = items.filter(item => item.type === 'open_question');
-
-    features.forEach(feature => {
-        if (!feature.parentId) {
-            const parent = findBestParent(feature, epics);
-            if (parent) {
-                feature.parentId = parent.id;
-                parent.children.push(feature);
-            }
-        }
-    });
-
-    requirements.forEach(requirement => {
-        if (!requirement.parentId) {
-            const parentFeature = findBestParent(requirement, features);
-            if (parentFeature) {
-                requirement.parentId = parentFeature.id;
-                parentFeature.children.push(requirement);
-            }
-        }
-    });
-
-    if (features.length > 0 && epics.length === 0) {
-        const inferredEpic = generateInferredItem('epic', features[0], 'Consolidated work from notes');
-        epics.push(inferredEpic);
-        items.push(inferredEpic);
-        features.forEach(feature => {
-            if (!feature.parentId) {
-                feature.parentId = inferredEpic.id;
-                inferredEpic.children.push(feature);
-            }
-        });
-    }
-
-    if (requirements.length > 0 && features.length === 0) {
-        const inferredFeature = generateInferredItem('feature', requirements[0], 'Inferred feature for requirements');
-        features.push(inferredFeature);
-        items.push(inferredFeature);
-        if (epics.length === 1) {
-            inferredFeature.parentId = epics[0].id;
-            epics[0].children.push(inferredFeature);
-        }
-        requirements.forEach(requirement => {
-            if (!requirement.parentId) {
-                requirement.parentId = inferredFeature.id;
-                inferredFeature.children.push(requirement);
-            }
-        });
-    }
-
-    const rootItems = epics.length ? epics : features.length ? features : requirements;
-    const detectedTopics = detectTopics(items);
-
-    return {
-        summary: `Generated ${rootItems.length} backlog item(s) from notes.`,
-        detected_topics: detectedTopics,
-        backlog_items: rootItems,
-        open_questions: openQuestions
-    };
 }
 
 /**
@@ -589,27 +672,16 @@ function generateArtifact(template, parsedNotes) {
  */
 function handleGenerate() {
     const notesInput = document.getElementById('notesInput').value;
-    const outputMode = document.getElementById('artifactType').value;
     const outputElement = document.getElementById('output');
 
     if (!notesInput.trim()) {
-        outputElement.textContent = 'Please enter some notes to generate an artifact.';
+        outputElement.textContent = 'Please enter some notes to generate a backlog structure.';
         return;
     }
 
-    if (outputMode === 'backlog') {
-        const backlog = generateBacklog(notesInput);
-        outputElement.textContent = formatBacklogResult(backlog);
-        showNotification('Backlog structure generated successfully!');
-        return;
-    }
-
-    const parsedNotes = parseNotes(notesInput);
-    const template = templates[outputMode];
-    const result = generateArtifact(template, parsedNotes);
-
-    outputElement.textContent = result;
-    showNotification('Artifact generated successfully!');
+    const backlog = generateBacklog(notesInput);
+    outputElement.textContent = formatBacklogResult(backlog);
+    showNotification('Backlog structure generated successfully!');
 }
 
 /**
@@ -704,12 +776,7 @@ function init() {
         }
     });
 
-    // Allow Enter key in artifact type to trigger generation
-    document.getElementById('artifactType').addEventListener('change', () => {
-        // Optional: auto-generate when type changes if there's already input
-        // Uncomment the line below if desired:
-        // if (document.getElementById('notesInput').value) { handleGenerate(); }
-    });
+    // No output mode selection is required; generate backlog directly
 
     console.log('Agile Artifact Generator initialized');
 }
