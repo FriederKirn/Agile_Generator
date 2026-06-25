@@ -460,37 +460,6 @@ function countItems(items, type) {
     return count;
 }
 
-function formatBacklogTree(item, depth = 0) {
-    const indent = '  '.repeat(depth);
-    const inferredTag = item.inferred ? ' (inferred)' : '';
-    const header = `${indent}${item.type.charAt(0).toUpperCase() + item.type.slice(1)}: ${item.title}${inferredTag}`;
-    const lines = [header];
-
-    if (item.type === 'feature' && item.fields && item.fields.user_goal) {
-        lines.push(`${indent}  User Goal: ${item.fields.user_goal}`);
-        lines.push(`${indent}  Description: ${item.fields.summary}`);
-    }
-    if (item.type === 'requirement' && item.fields && item.fields.requirement_statement) {
-        lines.push(`${indent}  Statement: ${item.fields.requirement_statement}`);
-        if (item.fields.acceptance_criteria && item.fields.acceptance_criteria.length) {
-            lines.push(`${indent}  Acceptance Criteria:`);
-            item.fields.acceptance_criteria.forEach(ac => lines.push(`${indent}  - ${ac}`));
-        }
-    }
-
-    item.children.forEach(child => {
-        lines.push(formatBacklogTree(child, depth + 1));
-    });
-    return lines.join('\n');
-}
-
-function formatBacklogResult(result) {
-    const epicCount = countItems(result.backlog_items, 'epic');
-    const featureCount = countItems(result.backlog_items, 'feature');
-    const requirementCount = countItems(result.backlog_items, 'requirement');
-    return `Summary: ${result.summary}\nDetected: ${epicCount} epic(s), ${featureCount} feature(s), ${requirementCount} requirement(s).\nAll requirements are attached to features and all features are attached to epics.`;
-}
-
 function renderBacklogItem(item, depth = 0) {
     const details = document.createElement('details');
     details.className = 'tree-item';
